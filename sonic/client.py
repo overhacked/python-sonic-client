@@ -2,6 +2,7 @@ from enum import Enum
 import socket
 import re
 from queue import Queue
+import functools
 import itertools
 
 
@@ -65,8 +66,32 @@ def quote_text(text):
     """
     if text is None:
         return ""
-    return '"' + text.replace('"', '\\"').replace('\r\n', ' ').replace('\n', ' ') + '"'
+    return '"' + normalize_text(text) + '"'
 
+
+def normalize_text(text):
+    """Normalize text to sonic protocol
+
+    Arguments:
+        text str -- text to escape and normalize
+
+    Returns
+        str -- quoted text
+    """
+    REPLACEMENTS = [
+        ('\\', '\\\\'),
+        ('"', '\\"'),
+        ('\r\n', ' '),
+        ('\n', ' '),
+    ]
+    if text is None:
+        return ""
+    text = functools.reduce(
+        lambda t, replace_args: t.replace(*replace_args),
+        REPLACEMENTS,
+        text
+    )
+    return text
 
 def is_error(response):
     """Check if the response is Error or not in sonic context.
@@ -134,7 +159,7 @@ def _parse_buffer_size(text):
     matches = re.findall("buffer\((\w+)\)", text)
     if not matches:
         raise ValueError("{} doesn't contain buffer(NUMBER)".format(text))
-    return matches[0]
+    return int(matches[0])
 
 
 def _get_async_response_id(text):
@@ -563,7 +588,7 @@ class IngestClient(SonicClient, CommonCommandsMixin):
             self._execute_command("PING")
 
         lang = "LANG({})".format(lang) if lang else ''
-        text = quote_text(text)
+        text = normalize_text(text)
         command_overhead = 4 + 1 \
             + len(collection) + 1 \
             + len(bucket) + 1 \
@@ -576,7 +601,7 @@ class IngestClient(SonicClient, CommonCommandsMixin):
             for i in range(0, len(text), available_bufsize)
         )
         for chunk in chunks:
-            self._execute_command("PUSH", collection, bucket, object, chunk, lang)
+            self._execute_command("PUSH", collection, bucket, object, f'"{chunk}"', lang)
 
     def pop(self, collection: str, bucket: str, object: str, text: str):
         """Pop search data from the index
