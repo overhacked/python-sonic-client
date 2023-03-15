@@ -202,7 +202,7 @@ class SonicConnection:
         self.__socket = None
         self.__reader = None
         self.__writer = None
-        self.bufize = None
+        self.bufsize = None
         self.protocol = None
 
     def connect(self):
@@ -439,6 +439,10 @@ class SonicClient:
         pass
 
     def __enter__(self):
+        # when used in a context, send an initial PING so that a connection
+        # is created and START gets sent to get the bufsize from the server
+        if self.bufsize == 0:
+            self._execute_command("PING")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -452,6 +456,7 @@ class SonicClient:
         """
         active = self.pool.get_connection()
         active.raw = self.raw
+        self.bufsize = active.bufsize
         return active
 
     def _execute_command(self, cmd, *args):
