@@ -541,6 +541,43 @@ class IngestClient(SonicClient, CommonCommandsMixin):
         text = quote_text(text)
         return self._execute_command("PUSH", collection, bucket, object, text, lang)
 
+    def push_chunked(self, collection: str, bucket: str, object: str, text: str, lang: str = None):
+        """Push search data in the index
+
+        Arguments:
+            collection {str} --  index collection (ie. what you search in, eg. messages, products, etc.)
+            bucket {str} -- index bucket name (ie. user-specific search classifier in the collection if you have any eg. user-1, user-2, .., otherwise use a common bucket name eg. generic, default, common, ..)
+            object {str} --  object identifier that refers to an entity in an external database, where the searched object is stored (eg. you use Sonic to index CRM contacts by name; full CRM contact data is stored in a MySQL database; in this case the object identifier in Sonic will be the MySQL primary key for the CRM contact)
+            text {str} -- search text to be indexed can be a single word, or a longer text; within maximum length safety limits
+
+        Keyword Arguments:
+            lang {str} -- [description] (default: {None})
+
+        Returns:
+            bool -- True if search data are pushed in the index.
+        """
+
+        # Ping the server to get an accurate bufsize if no connection
+        # has already been made
+        if self.bufsize == 0:
+            self._execute_command("PING")
+
+        lang = "LANG({})".format(lang) if lang else ''
+        text = quote_text(text)
+        command_overhead = 4 + 1 \
+            + len(collection) + 1 \
+            + len(bucket) + 1 \
+            + len(object) + 1 \
+            + 1 \
+            + len(lang) + 1
+        available_bufsize = self.bufsize - command_overhead
+        chunks = (
+            text[i:i+available_bufsize]
+            for i in range(0, len(text), available_bufsize)
+        )
+        for chunk in chunks:
+            self._execute_command("PUSH", collection, bucket, object, chunk, lang)
+
     def pop(self, collection: str, bucket: str, object: str, text: str):
         """Pop search data from the index
 
