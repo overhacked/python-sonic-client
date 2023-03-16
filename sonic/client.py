@@ -606,7 +606,7 @@ class IngestClient(SonicClient, CommonCommandsMixin):
             + len(_enc(bucket)) + 1 \
             + len(_enc(object)) + 1 \
             + 1 \
-            + len(_enc(lang)) + 1
+            + len(_enc(lang)) + 3
         available_bufsize = self.bufsize - command_overhead
 
         def _chunks():
