@@ -52,6 +52,8 @@ ALL_CMDS = {
     ]
 }
 
+SONIC_ENCODING = 'utf-8'
+
 # snippet from asonic code.
 
 
@@ -302,13 +304,13 @@ class SonicConnection:
     @property
     def _reader(self):
         if not self.__reader:
-            self.__reader = self._socket.makefile('r', encoding='utf-8')
+            self.__reader = self._socket.makefile('r', encoding=SONIC_ENCODING)
         return self.__reader
 
     @property
     def _writer(self):
         if not self.__writer:
-            self.__writer = self._socket.makefile('w', encoding='utf-8')
+            self.__writer = self._socket.makefile('wb')
         return self.__writer
 
     def close(self):
@@ -332,16 +334,20 @@ class SonicConnection:
         Returns:
             str -- formatted command string to be sent on the wire.
         """
-        cmd_str = cmd + " "
-        cmd_str += " ".join(args)
-        cmd_str += "\n"  # specs says \n, asonic does \r\n
-        return cmd_str
+        def ensure_bytes(str_or_bytes):
+            return bytes(str_or_bytes, SONIC_ENCODING)
+
+        cmd_bytes = ensure_bytes(cmd) + b" "
+        cmd_bytes += b" ".join(map(ensure_bytes, args))
+        cmd_bytes += b"\n"  # specs says \n, asonic does \r\n
+        return cmd_bytes
 
     def _execute_command(self, cmd, *args):
         """Formats and sends command with suitable arguments on the wire to sonic server
 
         Arguments:
             cmd {str} -- valid command
+            args {str|bytes} -- command arguments as strings or bytes objects
 
         Raises:
             ChannelError -- Raised for unsupported channel commands
@@ -355,8 +361,11 @@ class SonicConnection:
             raise ChannelError(
                 "command {} isn't allowed in channel {}".format(cmd, self.channel))
 
-        cmd_str = self._format_command(cmd, *args)
-        self._writer.write(cmd_str)
+        cmd_bytes = self._format_command(cmd, *args)
+        if self.bufsize is not None and len(cmd_bytes) > self.bufsize:
+            raise SonicServerError(
+                "command ({} bytes) too long for server buffer size ({} bytes)".format(len(cmd_bytes), self.bufsize))
+        self._writer.write(cmd_bytes)
         self._writer.flush()
         resp = self._get_response()
         return resp
@@ -582,26 +591,51 @@ class IngestClient(SonicClient, CommonCommandsMixin):
             bool -- True if search data are pushed in the index.
         """
 
+        def _enc(string):
+            return string.encode(SONIC_ENCODING)
+
         # Ping the server to get an accurate bufsize if no connection
         # has already been made
         if self.bufsize == 0:
             self._execute_command("PING")
 
         lang = "LANG({})".format(lang) if lang else ''
-        text = normalize_text(text)
+        text = _enc(normalize_text(text))
         command_overhead = 4 + 1 \
-            + len(collection) + 1 \
-            + len(bucket) + 1 \
-            + len(object) + 1 \
+            + len(_enc(collection)) + 1 \
+            + len(_enc(bucket)) + 1 \
+            + len(_enc(object)) + 1 \
             + 1 \
-            + len(lang) + 1
+            + len(_enc(lang)) + 1
         available_bufsize = self.bufsize - command_overhead
-        chunks = (
-            text[i:i+available_bufsize]
-            for i in range(0, len(text), available_bufsize)
-        )
-        for chunk in chunks:
-            self._execute_command("PUSH", collection, bucket, object, f'"{chunk}"', lang)
+
+        def _chunks():
+            # check that the chunk bytes are able to be decoded to ensure
+            # the chunk is not splitting in the middle of a UTF-8 or UTF-16
+            # multibyte character
+            chunk_start = 0
+            chunk_end = available_bufsize
+            text_len = len(text)
+            while chunk_start < text_len:
+                chunk = text[chunk_start:chunk_end]
+                decode_retries = 4
+                while True:
+                    try:
+                        if decode_retries == 0:
+                            raise SonicServerError("failed to chunk {} encoded data".format(SONIC_ENCODING))
+                        else:
+                            decode_retries -= 1
+                        chunk.decode(SONIC_ENCODING)
+                        break
+                    except UnicodeError:
+                        chunk_end -= 1
+                        chunk = chunk[:-1]
+                chunk_start = chunk_end
+                chunk_end = chunk_start + available_bufsize
+                yield chunk
+
+        for chunk in _chunks():
+            self._execute_command("PUSH", collection, bucket, object, '"' + chunk + '"', lang)
 
     def pop(self, collection: str, bucket: str, object: str, text: str):
         """Pop search data from the index
