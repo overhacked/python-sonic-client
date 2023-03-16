@@ -335,7 +335,7 @@ class SonicConnection:
             str -- formatted command string to be sent on the wire.
         """
         def ensure_bytes(str_or_bytes):
-            return bytes(str_or_bytes, SONIC_ENCODING)
+            return str_or_bytes if isinstance(str_or_bytes, bytes) else bytes(str_or_bytes, SONIC_ENCODING)
 
         cmd_bytes = ensure_bytes(cmd) + b" "
         cmd_bytes += b" ".join(map(ensure_bytes, args))
@@ -635,7 +635,7 @@ class IngestClient(SonicClient, CommonCommandsMixin):
                 yield chunk
 
         for chunk in _chunks():
-            self._execute_command("PUSH", collection, bucket, object, '"' + chunk + '"', lang)
+            self._execute_command("PUSH", collection, bucket, object, b'"' + chunk + b'"', lang)
 
     def pop(self, collection: str, bucket: str, object: str, text: str):
         """Pop search data from the index
